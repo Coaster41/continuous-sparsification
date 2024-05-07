@@ -99,3 +99,55 @@ class ResNet(MaskedNet):
         out = out.view(x.size(0), -1)
         out = self.classifier(out)
         return out
+
+class VGGBlock(nn.Module):
+    def __init__(self, sequential):
+        super(VGGBlock, self).__init__()
+        self.sequential = sequential
+
+    def forward(self, x, temp, ticket):
+        for m in self.sequential:
+            if isinstance(m, SoftMaskedConv2d):
+                x = self.m(x, temp, ticket)
+            else:
+                x = self.m(x)
+        return x
+
+class GraSP_VGG(MaskedNet):
+    def __init__(self, dataset='cifar10', depth=19, init_weights=True, cfg=None, affine=True, batchnorm=True, is_sparse=False, is_mask=False):
+        super(GraSP_VGG, self).__init__()
+        if cfg is None:
+            cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512]
+        self._AFFINE = affine
+        self.dataset = dataset
+        num_classes = 10
+        self.feature = self.make_layers(cfg, batchnorm)
+        self.classifier = nn.Linear(cfg[-1], num_classes)
+        self.mask_modules = [m for m in self.modules() if type(m) == SoftMaskedConv2d]
+        self.temp = 1
+
+    def make_layers(self, cfg, batch_norm=False):
+        layers = []
+        in_channels = 3
+        for v in cfg:
+            if v == 'M':
+                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            else:
+                conv2d = SoftMaskedConv2d(in_channels, v, kernel_size=3, padding=1)
+                if batch_norm:
+                    layers += [conv2d, nn.BatchNorm2d(v, affine=self._AFFINE), nn.ReLU(inplace=True)]
+                else:
+                    layers += [conv2d, nn.ReLU(inplace=True)]
+                in_channels = v
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        for m in self.feature:
+            if isinstance(m, SoftMaskedConv2d):
+                x = m(x, self.temp, self.ticket)
+            else:
+                x = m(x)
+        x = nn.AvgPool2d(2)(x)
+        x = x.view(x.size(0), -1)
+        y = self.classifier(x)
+        return y

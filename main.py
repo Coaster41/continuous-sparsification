@@ -8,6 +8,7 @@ import numpy as np
 import random
 from models import *
 from load_datasets import *
+import os
 
 parser = argparse.ArgumentParser(description='Training a ResNet on CIFAR-10 with Continuous Sparsification')
 parser.add_argument('--which-gpu', type=int, default=0, help='which GPU to use')
@@ -39,9 +40,42 @@ if args.cuda:
     torch.cuda.manual_seed_all(args.seed)
     cudnn.benchmark = True
 
-train_loader, val_loader, test_loader = generate_loaders(args.val_set_size, args.batch_size, args.workers)
+# train_loader, val_loader, test_loader = generate_loaders(args.val_set_size, args.batch_size, args.workers)
+def get10(batch_size, data_root='/tmp/public_dataset/pytorch', train=True, val=True, **kwargs):
+    data_root = os.path.expanduser(os.path.join(data_root, 'cifar10-data'))
+    num_workers = kwargs.setdefault('num_workers', 1)
+    kwargs.pop('input_size', None)
+    print("Building CIFAR-10 data loader with {} workers".format(num_workers))
+    ds = []
+    if train:
+        train_loader = torch.utils.data.DataLoader(
+            datasets.CIFAR10(
+                root=data_root, train=True, download=True,
+                transform=transforms.Compose([
+                    transforms.Pad(4),
+                    transforms.RandomCrop(32),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                ])),
+            batch_size=batch_size, shuffle=True, **kwargs)
+        ds.append(train_loader)
+    if val:
+        test_loader = torch.utils.data.DataLoader(
+            datasets.CIFAR10(
+                root=data_root, train=False, download=True,
+                transform=transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                ])),
+            batch_size=batch_size, shuffle=False, **kwargs)
+        ds.append(test_loader)
+    ds = ds[0] if len(ds) == 1 else ds
+    return ds
 
-model = ResNet(args.mask_initial_value)
+train_loader, test_loader = get10(batch_size=200, num_workers=1)
+
+model = GraSP_VGG(args.mask_initial_value)
 
 if args.cuda: model.cuda()
 print(model)
@@ -77,10 +111,10 @@ def train(outer_round):
             loss.backward()
             for optimizer in optimizers: optimizer.step()
 
-        val_acc = test(val_loader)
+        # val_acc = test(val_loader)
         test_acc = test(test_loader)
         remaining_weights = compute_remaining_weights(masks)
-        print('\t\tTemp: {:.1f}\tRemaining weights: {:.4f}\tVal acc: {:.1f}\tTest acc: {}'.format(model.temp, remaining_weights, val_acc, test_acc))
+        print('\t\tTemp: {:.1f}\tRemaining weights: {:.4f}\tTest acc: {}'.format(model.temp, remaining_weights, test_acc))
         
 def test(loader):
     model.eval()
